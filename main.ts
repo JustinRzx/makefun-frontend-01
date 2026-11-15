@@ -1,35 +1,94 @@
-// A working makefun-frontend-01 entry (Node 22, standard library only): the frontend is this directory's app/
-// folder, plain static files a browser opens at app/index.html (ES modules, CSS, no build step), reading make.fun's
-// public API at https://make.fun/api. The program hands it in: it copies app/ and screenshots/ from beside this file
-// to /output and writes /output/dossier.json, the summary the judge reads (your screenshots, the first load's files
-// and bytes, and your source), with the vendored make.fun library. Leave vendor/makefun-frontend.ts as it is: the
-// scorer requires dossier.json to be byte for byte what its own copy writes.
-//
-// A starting point, not a winner: a plain board of open bounties and a page for each. Build your frontend in app/
-// (a leaderboard, profiles, speed, ease of use), put 3 PNG or JPEG screenshots of it running on live data in
-// screenshots/ (the first by name is the cover; shots.json says which views this starter's were taken of), and run it.
-//
-// Serve it locally with `node serve.ts`, then open http://localhost:8080.
-// Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
-
-import { cpSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+#!/usr/bin/env node
+/* Custom entry rewritten in-session for makefun: deterministic copy + dossier build
+   - Node 22 compatible ESM
+   - Honors MAKEFUN_OUTPUT_DIR or ./output
+   - Clears output dir contents before writing
+   - Copies app/ and screenshots/ recursively (deterministic order)
+   - Imports buildDossier from vendor/makefun-frontend.ts and writes dossier.json
+*/
 import { buildDossier } from './vendor/makefun-frontend.ts';
+import { promises as fsp } from 'fs';
+import { existsSync } from 'fs';
+import { join } from 'path';
+import { mkdirSync } from 'fs';
 
-const here = fileURLToPath(new URL('.', import.meta.url));
-const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
+const envOut = process.env.MAKEFUN_OUTPUT_DIR;
+const OUT = envOut ? envOut : './output';
 
-mkdirSync(out, { recursive: true });
-cpSync(join(here, 'app'), join(out, 'app'), { recursive: true });
-mkdirSync(join(out, 'screenshots'), { recursive: true });
-if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
+async function emptyDir(path) {
+  // remove everything under path but keep path itself
+  try {
+    const entries = await fsp.readdir(path, { withFileTypes: true });
+    // deterministic order
+    entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    for (const e of entries) {
+      const p = join(path, e.name);
+      if (e.isDirectory()) await fsp.rm(p, { recursive: true, force: true });
+      else await fsp.unlink(p).catch(() => {});
+    }
+  } catch (err) {
+    // if dir does not exist we'll create later
+  }
+}
 
-// The scorer's own caps (reference/gate.json): only text_max_bytes shapes the bytes; the others refuse an entry the
-// scorer would refuse (more than 3 screenshots or one over 256 KiB; more than 993 files and directories in app/ or
-// 16 MiB of app files: app/ counts beside /output's own 1000-entry cap, its screenshots/ and dossier.json).
-writeFileSync(
-  join(out, 'dossier.json'),
-  buildDossier(out, { text_max_bytes: 163840, screenshots: { max: 3, max_bytes: 262144 }, app_max_files: 993, app_max_bytes: 16777216 }),
-);
+async function copyTree(src, dst) {
+  // replicate src directory into dst (dst must exist). We copy files and directories, skipping names starting with '.'
+  const entries = await fsp.readdir(src, { withFileTypes: true });
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  for (const e of entries) {
+    if (e.name.startsWith('.')) continue;
+    const srcPath = join(src, e.name);
+    const dstPath = join(dst, e.name);
+    if (e.isDirectory()) {
+      await fsp.mkdir(dstPath, { recursive: true });
+      await copyTree(srcPath, dstPath);
+    } else if (e.isFile()) {
+      // copy file bytes exactly
+      const data = await fsp.readFile(srcPath);
+      await fsp.writeFile(dstPath, data);
+    }
+  }
+}
+
+async function run() {
+  const outDir = OUT;
+  if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+  // ensure a clean output
+  await emptyDir(outDir);
+
+  // deterministic copy of app/ and screenshots/
+  const root = '.';
+  const appSrc = join(root, 'app');
+  const shotsSrc = join(root, 'screenshots');
+  const appDst = join(outDir, 'app');
+  const shotsDst = join(outDir, 'screenshots');
+
+  // copy only if source exists; let buildDossier error if missing required items
+  if (existsSync(appSrc)) {
+    await fsp.mkdir(appDst, { recursive: true });
+    await copyTree(appSrc, appDst);
+  }
+  if (existsSync(shotsSrc)) {
+    await fsp.mkdir(shotsDst, { recursive: true });
+    await copyTree(shotsSrc, shotsDst);
+  }
+
+  // call buildDossier with caps similar to kit examples
+  const caps = {
+    text_max_bytes: 163840,
+    screenshots: { max: 3, max_bytes: 262144 },
+    app_max_files: 993,
+    app_max_bytes: 16777216
+  };
+
+  const bytes = buildDossier(outDir, caps);
+  // bytes is a Uint8Array; write as-is
+  await fsp.writeFile(join(outDir, 'dossier.json'), Buffer.from(bytes));
+}
+
+run().catch((err) => {
+  // print error and non-zero exit so CI sees failure
+  // keep message concise
+  console.error('error:', err && (err.stack || err.message || err));
+  process.exitCode = 2;
+});

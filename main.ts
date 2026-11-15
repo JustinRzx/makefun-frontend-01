@@ -9,8 +9,9 @@
 import { buildDossier } from './vendor/makefun-frontend.ts';
 import { promises as fsp } from 'fs';
 import { existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { mkdirSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 const envOut = process.env.MAKEFUN_OUTPUT_DIR;
 const OUT = envOut ? envOut : './output';
@@ -57,7 +58,9 @@ async function run() {
   await emptyDir(outDir);
 
   // deterministic copy of app/ and screenshots/
-  const root = '.';
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const root = __dirname;
   const appSrc = join(root, 'app');
   const shotsSrc = join(root, 'screenshots');
   const appDst = join(outDir, 'app');

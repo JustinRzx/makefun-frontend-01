@@ -8,26 +8,20 @@ const fmtH = (ms) => {
   const h = Math.floor(ms/3600000); const m = Math.floor(ms%3600000/60000);
   return h+'h '+String(m).padStart(2,'0')+'m';
 }
-const fmtMoney = (n) => {
-  if (n==null) return '—';
-  const num = Number(n)||0;
-  if (num>=1) return '$'+num.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:2});
-  return '$'+num.toFixed(2);
-}
+const fm = (n) => { if (n==null) return '—'; const num=Number(n)||0; if(num>=1) return '$'+num.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:2}); return '$'+num.toFixed(2); }
 
-const cacheGet = (key) => {
-  try { return JSON.parse(localStorage.getItem(key)||'null'); } catch { return null }
-}
-const cachePut = (key, val) => localStorage.setItem(key, JSON.stringify(val));
+const cg = (k) => { try { return JSON.parse(localStorage.getItem(k)||'null'); } catch { return null } }
+// Quota-safe cachePut: skip huge payloads and ignore storage errors.
+const cp = (k,v) => { try { const s=JSON.stringify(v); if(s.length>1000000) return false; try{ localStorage.setItem(k,s); return true }catch(e){return false} } catch(e){return false} };
 
 async function fetchWithEtag(path){
-  const k = 'etag:'+path; const v = cacheGet(k);
+  const k = 'etag:'+path; const v = cg(k);
   const headers = v?.etag ? {'If-None-Match': v.etag} : {};
   const res = await fetch(path, {headers});
   if (res.status===304) return v.data;
   const data = await res.json();
   const etag = res.headers.get('etag');
-  if (etag) cachePut(k,{etag,data});
+  if (etag) cp(k,{etag,data});
   return data;
 }
 
@@ -53,21 +47,21 @@ async function renderBoard(q){
     const items = await loadBoard(q||'');
     const strip = e('#strip');
     const soon = items.filter(it => new Date(it.deadline).getTime() - Date.now() < 24*3600*1000);
-    strip.textContent = soon.length ? `Closing soon: ${soon.map(s=>s.title).join(' • ')}` : '';
+    strip.textContent = soon.length ? `Closing: ${soon.map(s=>s.title).join(' • ')}` : '';
     items.forEach(it => {
       const row = document.createElement('div'); row.className='row';
       const left = document.createElement('div'); left.className='col-left';
       const potVal = it.potUsd ?? it.rewardAmount ?? 0;
-      left.innerHTML = `<div class="title"><a href="#/bounty/${it.slug}">${it.title}</a></div><div class="meta">fee: ${it.entryFeeUsd?('$'+it.entryFeeUsd):'—'} • ${it.submissionCount||0} entries</div>`;
+      left.innerHTML = `<div class="title"><a href="#/bounty/${it.slug}">${it.title}</a></div><div class="meta">fee:${it.entryFeeUsd?('$'+it.entryFeeUsd):'—'} • ${it.submissionCount||0} entries</div>`;
       const mid = document.createElement('div'); mid.className='col-mid';
-      mid.innerHTML = `<div class="meta">pot: ${fmtMoney(potVal)}</div>`;
+      mid.innerHTML = `<div class="meta">pot:${fm(potVal)}</div>`;
       const right = document.createElement('div'); right.className='col-right';
       const cd = document.createElement('div'); cd.className='countdown'; cd.dataset.deadline = it.deadline;
       // set countdown immediately
       cd.textContent = fmtH(new Date(cd.dataset.deadline) - Date.now());
       const valueDensity = document.createElement('div'); valueDensity.className='meta';
       const hoursLeft = (new Date(it.deadline).getTime() - Date.now())/3600000;
-      if (hoursLeft>0) valueDensity.textContent = `${fmtMoney(potVal/Math.max(1,hoursLeft))}/h`; else valueDensity.textContent = '—';
+      if (hoursLeft>0) valueDensity.textContent = `${fm(potVal/Math.max(1,hoursLeft))}/h`; else valueDensity.textContent = '—';
       row.append(left,mid,right);
       right.append(cd,valueDensity);
       app.append(row);
@@ -89,17 +83,11 @@ async function renderBoard(q){
 async function renderBounty(slug){
   const app = e('#view');
   try{
-    app.innerHTML = 'Loading bounty…';
+    app.innerHTML = 'Loading…';
     const b = await fetchWithEtag(API + '/competitions/' + encodeURIComponent(slug));
     if (!b) { app.textContent='not found'; return false }
     const potVal = b.potUsd ?? b.rewardAmount ?? 0;
-    app.innerHTML = `
-      <h2>${b.title}</h2>
-      <div class="meta">deadline: ${new Date(b.deadline).toLocaleString()}</div>
-      <div class="meta">pot: ${fmtMoney(potVal)} • fee: ${b.entryFeeUsd?('$'+b.entryFeeUsd):'—'} • reward: ${b.rewardAmount?fmtMoney(b.rewardAmount):'—'} • ${b.submissionCount||0} entries</div>
-      <section>${b.description||b.summary||''}</section>
-      <p><a href="#/leaderboard/${slug}">View leaderboard</a></p>
-    `;
+    app.innerHTML = `<h2>${b.title}</h2><div class="meta">deadline: ${new Date(b.deadline).toLocaleString()}</div><div class="meta">pot: ${fm(potVal)} • fee: ${b.entryFeeUsd?('$'+b.entryFeeUsd):'—'} • reward: ${b.rewardAmount?fm(b.rewardAmount):'—'} • ${b.submissionCount||0} entries</div><section>${b.description||b.summary||''}</section><p><a href="#/leaderboard/${slug}">View leaderboard</a></p>`;
     return true;
   } catch (err) {
     app.textContent = 'Failed to load bounty: '+(err && err.message ? err.message : String(err));
@@ -110,11 +98,13 @@ async function renderBounty(slug){
 async function renderLeaderboard(slug){
   const app = e('#view');
   try{
-    app.innerHTML = 'Loading leaderboard…';
+    app.innerHTML = 'Loading…';
     const d = await fetchWithEtag(API + '/competitions/' + encodeURIComponent(slug) + '/leaderboard?phase=dev');
     const rows = (d && d.entries) ? d.entries : [];
+    const total = rows.length || 0;
+    const shown = rows.slice(0, 50);
     const ul = document.createElement('div');
-    rows.forEach(r=>{
+    shown.forEach(r=>{
       const row = document.createElement('div'); row.className='row';
       const winMicro = r.values?.judge ?? 0;
       const winPct = (Number(winMicro)/10000).toFixed(2);
@@ -122,6 +112,9 @@ async function renderLeaderboard(slug){
       ul.append(row);
     });
     app.innerHTML = `<h2>Leaderboard: ${slug}</h2>`;
+    if (total > shown.length) {
+      const note = document.createElement('div'); note.className = 'meta'; note.textContent = `Top ${shown.length}/${total}`; app.append(note);
+    }
     app.append(ul);
     return true;
   } catch (err) {
@@ -136,10 +129,7 @@ async function renderProfile(handle){
     app.innerHTML = 'Loading profile…';
     const p = await fetchWithEtag(API + '/profiles/' + encodeURIComponent(handle));
     if (!p) { app.textContent='no profile'; return false }
-    app.innerHTML = `<h2>${p.display_name||p.handle}</h2><div class="meta">${p.bio||''}</div>
-      <p>GitHub: ${p.github_login||'—'}</p>
-      <p>Wallet: ${p.wallet||p.address||'—'}</p>
-      <div class="meta">entered: ${p.competitions_entered||0} • placed: ${p.competitions_placed||0} • won: ${p.competitions_won||0}</div>`;
+    app.innerHTML = `<h2>${p.display_name||p.handle}</h2><div class="meta">${p.bio||''}</div><p>GitHub: ${p.github_login||'—'}</p><p>Wallet: ${p.wallet||p.address||'—'}</p><div class="meta">entered: ${p.competitions_entered||0} • placed: ${p.competitions_placed||0} • won: ${p.competitions_won||0}</div>`;
     return true;
   } catch (err) {
     app.textContent = 'Failed to load profile: '+(err && err.message ? err.message : String(err));

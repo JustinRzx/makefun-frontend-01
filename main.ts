@@ -17,10 +17,8 @@ const envOut = process.env.MAKEFUN_OUTPUT_DIR;
 const OUT = envOut ? envOut : './output';
 
 async function emptyDir(path) {
-  // remove everything under path but keep path itself
   try {
     const entries = await fsp.readdir(path, { withFileTypes: true });
-    // deterministic order
     entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     for (const e of entries) {
       const p = join(path, e.name);
@@ -28,12 +26,11 @@ async function emptyDir(path) {
       else await fsp.unlink(p).catch(() => {});
     }
   } catch (err) {
-    // if dir does not exist we'll create later
+    // ignore if dir missing
   }
 }
 
 async function copyTree(src, dst) {
-  // replicate src directory into dst (dst must exist). We copy files and directories, skipping names starting with '.'
   const entries = await fsp.readdir(src, { withFileTypes: true });
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const e of entries) {
@@ -44,7 +41,6 @@ async function copyTree(src, dst) {
       await fsp.mkdir(dstPath, { recursive: true });
       await copyTree(srcPath, dstPath);
     } else if (e.isFile()) {
-      // copy file bytes exactly
       const data = await fsp.readFile(srcPath);
       await fsp.writeFile(dstPath, data);
     }
@@ -54,10 +50,8 @@ async function copyTree(src, dst) {
 async function run() {
   const outDir = OUT;
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
-  // ensure a clean output
   await emptyDir(outDir);
 
-  // deterministic copy of app/ and screenshots/
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
   const root = __dirname;
@@ -66,7 +60,6 @@ async function run() {
   const appDst = join(outDir, 'app');
   const shotsDst = join(outDir, 'screenshots');
 
-  // copy only if source exists; let buildDossier error if missing required items
   if (existsSync(appSrc)) {
     await fsp.mkdir(appDst, { recursive: true });
     await copyTree(appSrc, appDst);
@@ -76,7 +69,6 @@ async function run() {
     await copyTree(shotsSrc, shotsDst);
   }
 
-  // call buildDossier with caps similar to kit examples
   const caps = {
     text_max_bytes: 163840,
     screenshots: { max: 3, max_bytes: 262144 },
@@ -85,13 +77,10 @@ async function run() {
   };
 
   const bytes = buildDossier(outDir, caps);
-  // bytes is a Uint8Array; write as-is
   await fsp.writeFile(join(outDir, 'dossier.json'), Buffer.from(bytes));
 }
 
 run().catch((err) => {
-  // print error and non-zero exit so CI sees failure
-  // keep message concise
   console.error('error:', err && (err.stack || err.message || err));
   process.exitCode = 2;
 });

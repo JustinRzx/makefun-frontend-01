@@ -108,7 +108,7 @@ async function renderLeaderboard(slug){
       const row = document.createElement('div'); row.className='row';
       const winMicro = r.values?.judge ?? 0;
       const winPct = (Number(winMicro)/10000).toFixed(2);
-      row.innerHTML = `<div><a href="#/u/${r.handle}">${r.handle}</a> — ${r.title||''}</div><div class="meta">${r.rank} • ${winPct}% • ${r.bytes||0} bytes</div>`;
+      row.innerHTML = `<div><a href="#/u/${r.handle}">${r.handle}</a> — ${r.title||''}</div><div class="meta">${r.rank} • ${winPct}% • ${r.values?.bytes ?? 0} bytes</div>`;
       ul.append(row);
     });
     app.innerHTML = `<h2>Leaderboard: ${slug}</h2>`;

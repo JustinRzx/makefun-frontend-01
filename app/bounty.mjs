@@ -41,9 +41,18 @@ export async function renderBounty(slug, container){
     info.innerHTML=`Pot: ${pot?('$'+pot.toFixed(2)):'—'} • Fee: ${fee?('$'+fee):'Free'} • Entries: ${rows} ${datesHtml}`;
 
     // Rewards table
-    const rewardsSrc = b.rewardsNow || b.rewards || {};
-    // rewardsSrc expected to map place->base amount, and sum to 500 (or rewardAmount)
-    const rewardTotal = Number(b.rewardAmount||0) || Object.values(rewardsSrc||{}).reduce((s,x)=>s+Number(x||0),0) || 0;
+    // rewardsNow may be an ARRAY of {place, baseUsd, feeShareUsd, amountUsd}
+    const rewardsNowArr = Array.isArray(b.rewardsNow) ? b.rewardsNow : null;
+    const rewardsMap = rewardsNowArr ? null : (b.rewards || {});
+    // rewardTotal: prefer explicit rewardAmount, else sum values from map or array
+    let rewardTotal = Number(b.rewardAmount||0);
+    if (!rewardTotal) {
+      if (rewardsNowArr) {
+        rewardTotal = rewardsNowArr.reduce((s,e)=>s + (Number(e.amountUsd||e.baseUsd||0)), 0);
+      } else {
+        rewardTotal = Object.values(rewardsMap||{}).reduce((s,x)=>s+Number(x||0),0) || 0;
+      }
+    }
     const feePool = (Number(pot)||0) - rewardTotal; // may be negative
     function dollar(n){return '$'+Number(n||0).toFixed(2)}
 
@@ -54,11 +63,22 @@ export async function renderBounty(slug, container){
     for(const g of groups){
       let label=''; let start=g[0], end=(g[1]||g[0]);
       label = (start===end)?String(start):`${start}th–${end}th`;
-      // If a range, assume same base for each place inside; pick first place base
       const place = start;
-      const base = Number(rewardsSrc[String(place)]||0);
-      const feeShare = rewardTotal>0? (feePool * (base / (rewardTotal||500)) ) : 0;
-      const pays = base + feeShare;
+      let base = 0, feeShare = 0, pays = 0;
+      if (rewardsNowArr) {
+        const ent = rewardsNowArr.find(x=>Number(x.place)===Number(place));
+        if (ent) {
+          base = Number(ent.baseUsd||ent.base||0);
+          feeShare = Number(ent.feeShareUsd||0);
+          pays = Number(ent.amountUsd|| (base + feeShare));
+        } else {
+          base = 0; feeShare = 0; pays = 0;
+        }
+      } else {
+        base = Number(rewardsMap[String(place)]||0);
+        feeShare = rewardTotal>0? (feePool * (base / (rewardTotal||500)) ) : 0;
+        pays = base + feeShare;
+      }
       const tr=document.createElement('tr');
       tr.innerHTML=`<td>${label}</td><td>${dollar(base)}</td><td>${dollar(feeShare)}</td><td>${dollar(pays)}</td>`;
       body.append(tr);

@@ -13,7 +13,7 @@ function renderList(){left.querySelectorAll('.row').forEach(n=>n.remove());items
 }
 
 // populate right pane with soonest-closing bounty by default
-async function populateRightDefault(){ if(items.length===0) return; const s=items[0].slug; try{ const m=await import('./bounty.mjs'); m.renderBounty(s,right);}catch(e){ right.textContent='failed to load detail' } }
+async function populateRightDefault(){ if(items.length===0) return; const s=items[0].slug; try{ const m=await import('./bounty.mjs'); await m.renderBounty(s,right);}catch(e){ right.textContent='failed to load detail' } }
 
 renderList(); await populateRightDefault(); wrap.append(left,right);app.append(wrap);if(_t)clearInterval(_t);_t=setInterval(()=>document.querySelectorAll('.countdown').forEach(c=>c.textContent=fh(new Date(c.dataset.deadline)-Date.now())),1000);window.__shotReady=true;updateFoot();}
 function mount(){const h=location.hash.replace('#','')||'/';if(h.startsWith('/bounty/')){const s=h.split('/')[2];import('./bounty.mjs').then(m=>m.renderBounty(s)).catch(()=>qS('#view').textContent='failed');}else if(h.startsWith('/leaderboard/')){const s=h.split('/')[2];import('./leaderboard.mjs').then(m=>m.renderLeaderboard(s)).catch(()=>qS('#view').textContent='failed');}else if(h.startsWith('/u/')){const s=h.split('/')[2];import('./profile.mjs').then(m=>m.renderProfile(s)).catch(()=>qS('#view').textContent='failed');}else showBoard(qS('#search').value||'');}
